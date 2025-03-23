@@ -1,109 +1,128 @@
 # Étapes pour créer un logiciel de partage d'écran en UDP
 
-Ce document détaille les étapes pour développer un logiciel de partage d'écran qui peut être minimisé dans la zone de notification de Windows (système tray). L'application utilise raylib pour l'interface graphique et rnet.h pour la communication réseau en UDP.
+Ce document détaille les étapes pour développer un logiciel de partage d'écran P2P qui peut être minimisé dans la zone de notification de Windows (système tray). L'application utilise raylib pour l'interface graphique et rnet.h pour la communication réseau en UDP.
+
+## État actuel du projet
+
+Le projet implémente actuellement la capture d'écran avec raylib et affiche l'adresse IP du client dans une barre supérieure. Les prochaines étapes consistent à implémenter le partage P2P de l'écran et l'intégration avec la zone de notification Windows.
 
 ## Outils et bibliothèques utilisés
 
-- **raylib**: Une bibliothèque C simple pour développer des jeux/applications. Elle fournit des fonctions pour créer des fenêtres, gérer l'input, et afficher des graphiques.
-- **rnet.h**: Une fine couche d'abstraction au-dessus de ENet pour la communication réseau (incluse dans notre projet).
-- **nob.c/nob.h**: Un système de build simple pour C qui nous permettra de compiler notre projet.
+- **raylib**: Une bibliothèque C simple pour développer des jeux/applications qui fournit des fonctions pour créer des fenêtres, gérer l'input, et afficher des graphiques.
+- **rnet.h**: Une fine couche d'abstraction pour la communication réseau UDP (incluse dans notre projet).
+- **nob.c/nob.h**: Un système de build simple pour C qui nous permet de compiler notre projet.
 
+## Structure du projet
 
-## Étape 2: Implémentation de la capture d'écran avec raylib
+```
+nob.c                  # Système de build
+nob.h                  # Header du système de build
+README.md              # Ce document
+include/               # Fichiers d'en-tête
+  ├── capture.h        # Définitions pour la capture d'écran
+  ├── network.h        # Définitions pour la communication réseau
+  ├── raylib.h         # API de raylib
+  ├── raymath.h        # Fonctions mathématiques de raylib
+  ├── rlgl.h           # Fonctions OpenGL de raylib
+  ├── rnet.h           # API de communication réseau
+  └── ui.h             # Définitions pour l'interface utilisateur
+lib/                   # Bibliothèques
+  ├── libraylib.a      # Bibliothèque statique raylib
+  ├── libraylibdll.a   # Bibliothèque d'importation raylib
+  └── raylib.dll       # Bibliothèque dynamique raylib
+src/                   # Code source
+  ├── capture.c        # Implémentation de la capture d'écran
+  └── main.c           # Point d'entrée de l'application
+```
 
-1. Utiliser `InitWindow()` de raylib pour créer une fenêtre (qui pourra être cachée)
-2. Implementer la capture d'écran:
-   - Utiliser `GetScreenWidth()` et `GetScreenHeight()` pour obtenir la résolution
-   - Utiliser `LoadImage()` ou `TakeScreenshot()` pour capturer l'écran
-   - Convertir l'image en texture avec `LoadTextureFromImage()`
-   - Compresser les données d'image pour la transmission réseau
+## Étapes complétées
 
-## Étape 3: Mise en place du système de communication réseau avec rnet.h
+### Étape 1: Configuration du projet
+- ✅ Mise en place de la structure du projet
+- ✅ Intégration de raylib pour l'interface graphique
+- ✅ Configuration du système de build avec nob.c
 
-1. Initialiser la bibliothèque réseau avec `rnetInit()`
-2. Créer un serveur (émetteur) avec `rnetHost()` qui:
-   - Diffuse les captures d'écran aux clients connectés avec `rnetBroadcast()`
-   - Vérifie les nouvelles connexions avec `rnetReceive()`
-3. Créer un client (récepteur) avec `rnetConnect()` qui:
-   - Reçoit les données d'image avec `rnetReceive()`
-   - Décompresse et affiche l'image reçue
+### Étape 2: Implémentation de la capture d'écran
+- ✅ Création d'une fenêtre avec raylib
+- ✅ Implémentation de la capture d'écran avec `LoadImageFromScreen()`
+- ✅ Conversion de l'image en texture pour l'affichage
+- ✅ Implémentation d'une compression de base
+- ✅ Affichage de l'adresse IP du client dans la barre supérieure
 
-## Étape 4: Implémentation de l'interface utilisateur
+## Prochaines étapes
 
-1. Créer une interface utilisateur simple avec:
-   - Boutons pour démarrer/arrêter le partage d'écran
-   - Affichage de l'état de la connexion et des clients connectés
-   - Affichage de l'adresse IP de l'utilsateur
-   - Champ de saisie pour l'adresse IP des clients pairs
-   - Options de configuration (qualité de l'image, taux de rafraîchissement)
+### Étape 3: Amélioration de la capture d'écran
+1. Modifier la capture pour cibler l'écran global au lieu de la fenêtre raylib:
+   - Utiliser les API Windows (BitBlt, GDI) pour capturer directement l'écran
+   - Supporter la capture multi-écrans
+   - Permettre la sélection d'une région spécifique de l'écran
 
-2. Gérer les entrées utilisateur:
-   - Utiliser `IsKeyPressed()` et `IsMouseButtonPressed()` pour détecter les interactions
-   - Implémenter des composants d'UI personnalisés ou utiliser raygui (extension de raylib)
+2. Optimiser le processus de capture:
+   - Implémenter la détection des changements entre les captures
+   - Améliorer les méthodes de compression (JPEG, PNG, ou compression personnalisée)
+   - Mettre en place un système de capture à fréquence variable selon le contenu
 
-## Étape 5: Support de la zone de notification (system tray)
+### Étape 4: Implémentation du partage P2P
+1. Mettre en place le système de communication P2P avec rnet.h:
+   - Initialiser la bibliothèque réseau
+   - Développer le système de connexion par adresse IP
+   - Implémenter la transmission des captures d'écran
 
-1. Implémenter l'intégration avec la zone de notification Windows:
-   - Utiliser les API Windows pour créer une icône dans la zone de notification
-   - Implémenter un menu contextuel pour contrôler l'application depuis la zone de notification
-   - Permettre à l'application de continuer à fonctionner en arrière-plan
+2. Ajouter la gestion granulaire des connexions:
+   - Interface pour entrer/sauvegarder des adresses IP de pairs
+   - Option pour autoriser/bloquer le partage avec des pairs spécifiques
+   - Panneau de contrôle des pairs connectés avec statut en temps réel
+   - Possibilité de diffuser à tous les pairs ou seulement à une sélection
 
-2. Gérer les événements de minimisation/restauration:
-   - Capter l'événement de minimisation pour cacher la fenêtre au lieu de la minimiser
-   - Ajouter une option pour restaurer l'application depuis la zone de notification
+3. Implémenter le chiffrement des données pour la sécurité:
+   - Chiffrement des flux vidéo
+   - Authentication entre les pairs
+   - Protection par mot de passe des sessions de partage
 
-## Étape 6: Optimisation des performances
-
-1. Optimiser la capture et la transmission d'écran:
-   - Détecter les changements entre les images pour n'envoyer que les zones modifiées
-   - Implémenter plusieurs niveaux de compression selon la qualité souhaitée
-   - Utiliser des threads séparés pour la capture, la compression et l'envoi
-
-2. Optimiser l'utilisation de la bande passante:
-   - Adapter dynamiquement la qualité d'image selon la latence réseau
-   - Utiliser `RNET_UNRELIABLE` pour les trames moins importantes, `RNET_RELIABLE` pour les trames clés
-   - Mettre en place un mécanisme de throttling pour éviter la congestion réseau
-
-## Étape 7: Gestion des erreurs et amélioration de l'expérience utilisateur
-
-1. Implémenter une gestion robuste des erreurs:
-   - Gérer les déconnexions et tentatives de reconnexion automatiques
-   - Afficher des messages d'erreur clairs à l'utilisateur
-   - Journaliser les événements importants pour le débogage
+### Étape 5: Interface utilisateur avancée
+1. Créer une interface utilisateur complète:
+   - Onglets pour naviguer entre les différentes fonctionnalités
+   - Liste des pairs connectés avec statuts et options
+   - Paramètres de qualité et performances
+   - Indicateurs visuels de l'état du partage et de la qualité du réseau
 
 2. Améliorer l'expérience utilisateur:
-   - Ajouter des indicateurs de performance (FPS, latence réseau)
-   - Permettre de sélectionner un écran spécifique sur les configurations multi-écrans
-   - Implémenter des raccourcis clavier globaux pour les actions courantes
+   - Ajout de notifications pour les événements importants
+   - Interface intuitive et responsive
+   - Thèmes visuels (clair/sombre)
 
-## Étape 8: Tests et déploiement
+### Étape 6: Support de la zone de notification (system tray)
+1. Implémenter l'intégration avec la zone de notification Windows:
+   - Icône dans la zone de notification
+   - Menu contextuel pour les fonctions principales
+   - Poursuite du partage en arrière-plan
+   - Notifications système pour les connexions/déconnexions
 
-1. Tester l'application dans différentes conditions réseau:
-   - Réseau local (LAN)
-   - Via Internet avec différentes vitesses de connexion
-   - À travers des pare-feu et des NAT
+### Étape 7: Optimisation et fiabilité
+1. Optimiser les performances:
+   - Utilisation de threads pour les opérations intensives
+   - Gestion intelligente de la bande passante
+   - Adaptation dynamique de la qualité selon les conditions réseau
 
-2. Préparer le déploiement:
-   - Créer un installeur ou un package portable
-   - Documenter l'utilisation de l'application
-   - Vérifier la compatibilité avec différentes versions de Windows
+2. Améliorer la fiabilité:
+   - Système robuste de reconnexion automatique
+   - Gestion des erreurs et exceptions
+   - Journalisation avancée pour le débogage
 
-## Structure du code source
+### Étape 8: Tests et déploiement
+1. Tests approfondis:
+   - Tests sur différentes configurations matérielles
+   - Tests dans diverses conditions réseau
+   - Tests de sécurité
 
-```
-src/
-  ├── main.c           # Point d'entrée de l'application
-  ├── capture.c        # Fonctions de capture d'écran
-  ├── network.c        # Gestion du réseau avec rnet.h
-  ├── ui.c             # Interface utilisateur
-  ├── tray.c           # Intégration avec la zone de notification
-  └── common.h         # Définitions communes
-
-build.c                # Script de build avec nob
-```
+2. Déploiement:
+   - Création d'un installeur
+   - Documentation utilisateur
+   - Support pour les mises à jour
 
 ## Remarques importantes
 
-- L'utilisation de raylib simplifie considérablement le développement multiplateforme, mais notre focus initial est Windows pour la fonctionnalité de zone de notification.
-- Le protocole UDP via rnet.h est idéal pour le streaming d'écran car il privilégie la vitesse à la fiabilité.
-- Pour une qualité optimale, nous devrons expérimenter avec différentes techniques de compression et de détection de changements d'écran.
+- Le logiciel est conçu comme une solution P2P sans serveur central, permettant un partage direct entre utilisateurs.
+- Le protocole UDP est utilisé pour sa rapidité, avec des mécanismes de fiabilité intégrés pour les données importantes.
+- Le chiffrement des données est une priorité pour garantir la confidentialité des écrans partagés.
+- L'application est optimisée pour Windows mais peut être adaptée à d'autres plateformes en modifiant les fonctionnalités spécifiques à Windows.
