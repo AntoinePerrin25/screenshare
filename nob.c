@@ -22,10 +22,10 @@ int main(int argc, char **argv)
         nob_cmd_append(&cmd, "gcc");
         nob_cmd_append(&cmd, "-Wall", "-Wextra", "-g");
         #if OPTI
-            nob_cmd_append(&cmd, "-O2");
+            nob_cmd_append(&cmd, "-O2", "-march=native", "-ffast-math");
         #endif
         nob_cmd_append(&cmd, "-I./include", "-L./lib");
-        nob_cmd_append(&cmd, "./src/main.c", "./src/capture.c");
+        nob_cmd_append(&cmd, "./src/main.c", "./src/capture.c", "./src/network.c");
         nob_cmd_append(&cmd, "-o", "./build/client");
         nob_cmd_append(&cmd, "-lraylib", "-lenet", "-lopengl32", "-lgdi32", "-lwinmm", "-lws2_32");
         if (!nob_cmd_run_sync(cmd)) return 1;

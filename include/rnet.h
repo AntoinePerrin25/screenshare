@@ -37,6 +37,7 @@ bool rnetSendToPeer(rnetPeer* peer, rnetTargetPeer* targetPeer, const void* data
 rnetTargetPeer* rnetGetLastEventPeer(rnetPeer* peer);
 
 #ifdef NETWORK_IMPL
+#define ENET_IMPLEMENTATION
 #include <enet/enet.h>
 #include <string.h>
 

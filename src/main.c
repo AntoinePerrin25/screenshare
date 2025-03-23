@@ -19,7 +19,7 @@
 #include <unistd.h>
 #endif
 #include <raylib.h>
-
+#define NETWORK_IMPL
 #include "../include/capture.h"
 #include "../include/network.h"
 #include "../include/ui.h"
@@ -77,6 +77,16 @@ typedef struct {
     // Informations réseau
     char localIP[MAX_IP_LENGTH]; // IP locale de l'hôte
     int localPort;               // Port local
+    
+    // Nouvelles informations pour le partage P2P
+    bool networkInitialized;     // Indique si le réseau est initialisé
+    char remotePeerIP[MAX_IP_LENGTH]; // IP du pair distant pour la connexion
+    int remotePeerPort;          // Port du pair distant pour la connexion
+    int connectedPeerID;         // ID du pair connecté (-1 si aucun)
+    bool isConnecting;           // Indique si une connexion est en cours
+    int lastNetworkActivity;     // Horodatage de la dernière activité réseau
+    char connectionStatus[256];  // Message de statut de connexion
+    char connectionPassword[64]; // Mot de passe pour le chiffrement
 } AppContext;
 
 // Prototypes de fonctions
@@ -89,6 +99,11 @@ void ToggleSharing(AppContext* ctx);
 void ToggleMinimized(AppContext* ctx);
 bool GetLocalIPAddress(char* ipBuffer, int bufferSize);
 void RenderTopBar(AppContext* ctx); // Nouvelle fonction pour afficher la barre supérieure
+
+// Nouvelles fonctions pour la gestion des connexions réseau
+void ConnectToPeerByIP(AppContext* ctx);
+void DisconnectFromCurrentPeer(AppContext* ctx);
+void ToggleEncryption(AppContext* ctx);
 
 int main(void) {
     // Initialisation du contexte de l'application
@@ -163,8 +178,22 @@ void InitApplication(AppContext* ctx) {
     
     printf("[INFO] Adresse IP locale: %s:%d\n", ctx->localIP, ctx->localPort);
     
-    // Note: Pour cette étape nous n'initialisons pas encore le réseau complet
-    // L'initialisation complète sera faite dans les étapes suivantes
+    // Initialisation du système réseau P2P
+    if (InitNetworkSystem(ctx->localPort)) {
+        ctx->networkInitialized = true;
+        strcpy(ctx->connectionStatus, "Réseau initialisé, en attente de connexion");
+        printf("[INFO] Système réseau initialisé sur le port %d\n", ctx->localPort);
+    } else {
+        ctx->networkInitialized = false;
+        strcpy(ctx->connectionStatus, "Échec de l'initialisation réseau");
+        printf("[ERROR] Échec de l'initialisation du système réseau\n");
+    }
+    
+    // Initialisation des autres variables réseau
+    ctx->connectedPeerID = -1;
+    ctx->isConnecting = false;
+    ctx->remotePeerPort = DEFAULT_PORT;
+    ctx->lastNetworkActivity = GetTime();
     
     printf("[INFO] Application initialisée avec succès\n");
 }
@@ -181,6 +210,13 @@ void CloseApplication(AppContext* ctx) {
     // Fermeture du système de capture
     CloseCaptureSystem();
     
+    // Fermeture du système réseau
+    if (ctx->networkInitialized) {
+        printf("[INFO] Fermeture du système réseau\n");
+        CloseNetworkSystem();
+        ctx->networkInitialized = false;
+    }
+    
     // Fermeture de la fenêtre raylib
     CloseWindow();
     
@@ -189,6 +225,14 @@ void CloseApplication(AppContext* ctx) {
 
 void UpdateApplication(AppContext* ctx) {
     if (!ctx || !ctx->running) return;
+    
+    // Traitement des événements réseau
+    if (ctx->networkInitialized) {
+        int processedPackets = ProcessNetworkEvents();
+        if (processedPackets > 0) {
+            ctx->lastNetworkActivity = GetTime();
+        }
+    }
     
     // En mode partage, faire une capture à intervalle régulier
     static double lastCaptureTime = 0;
@@ -243,12 +287,40 @@ void UpdateApplication(AppContext* ctx) {
                 CompressCaptureData(&ctx->currentCapture, ctx->captureQuality);
             }
             
-            // Dans l'étape 4, nous enverrons ici les données via le réseau
+            // Envoi des données de capture via le réseau si connecté à un pair
+            if (ctx->networkInitialized && ctx->connectedPeerID >= 0) {
+                // Chiffrer les données si le chiffrement est activé
+                if (ctx->encryptionEnabled) {
+                    EncryptCaptureData(&ctx->currentCapture);
+                }
+                
+                // Envoyer les données au pair connecté
+                if (SendCaptureData(ctx->connectedPeerID, &ctx->currentCapture)) {
+                    strcpy(ctx->connectionStatus, "Capture envoyée avec succès");
+                } else {
+                    strcpy(ctx->connectionStatus, "Échec de l'envoi de la capture");
+                    printf("[ERROR] Échec de l'envoi des données de capture au pair %d\n", 
+                           ctx->connectedPeerID);
+                }
+            }
         } else {
             printf("[ERROR] Échec de la capture d'écran\n");
         }
         
         lastCaptureTime = currentTime;
+    }
+    
+    // Vérifier l'état de la connexion (timeout, etc.)
+    if (ctx->networkInitialized && ctx->connectedPeerID >= 0) {
+        double timeSinceLastActivity = currentTime - ctx->lastNetworkActivity;
+        
+        // Si aucune activité pendant 10 secondes, on considère la connexion comme perdue
+        if (timeSinceLastActivity > 10.0) {
+            printf("[WARNING] Timeout de connexion avec le pair %d\n", ctx->connectedPeerID);
+            DisconnectFromPeer(ctx->connectedPeerID);
+            ctx->connectedPeerID = -1;
+            strcpy(ctx->connectionStatus, "Connexion perdue (timeout)");
+        }
     }
 }
 
@@ -338,21 +410,59 @@ void RenderApplication(AppContext* ctx) {
         DrawText(TextFormat("Intervalle: %d ms, Qualité: %d%%", 
                           ctx->captureInterval, ctx->captureQuality), 
                 10, y, 20, DARKGRAY);
-        y+=30;
+        y += 30;
+        
+        // Informations sur la connexion réseau
+        if (ctx->networkInitialized) {
+            Color netColor = ctx->connectedPeerID >= 0 ? GREEN : GRAY;
+            DrawText(TextFormat("Réseau: %s", ctx->connectedPeerID >= 0 ? 
+                              "Connecté" : "En attente"), 10, y, 20, netColor);
+            y += 30;
+            
+            if (ctx->connectedPeerID >= 0) {
+                DrawText(TextFormat("Pair connecté: %s (ID %d)", 
+                                  ctx->remotePeerIP, ctx->connectedPeerID), 10, y, 20, netColor);
+                y += 30;
+            }
+            
+            if (ctx->encryptionEnabled) {
+                DrawText("Chiffrement: Activé", 10, y, 20, GREEN);
+            } else {
+                DrawText("Chiffrement: Désactivé", 10, y, 20, GRAY);
+            }
+            y += 30;
+        }
 
         // Current fps on white rectangle
-        DrawRectangle(0, y+30, 90, 20, WHITE);
-        DrawText(TextFormat("FPS: %d", GetFPS()), 10, y + 30, 20, DARKGRAY);
+        DrawRectangle(0, y+10, 90, 20, WHITE);
+        DrawText(TextFormat("FPS: %d", GetFPS()), 10, y + 10, 20, DARKGRAY);
     }
     
     // Affichage de l'état et des contrôles
+    int bottomY = GetScreenHeight() - 120;
+    
+    // Affichage de l'état de l'application
     DrawText(ctx->state == APP_STATE_SHARING ? "État: Partage en cours" : "État: En attente", 
-             10, GetScreenHeight() - 90, 20, ctx->state == APP_STATE_SHARING ? GREEN : GRAY);
+             10, bottomY, 20, ctx->state == APP_STATE_SHARING ? GREEN : GRAY);
+    bottomY += 30;
+    
+    // Affichage du statut de connexion
+    if (ctx->networkInitialized) {
+        DrawText(ctx->connectionStatus, 10, bottomY, 20, 
+                ctx->connectedPeerID >= 0 ? GREEN : ORANGE);
+        bottomY += 30;
+    }
     
     // Affichage des touches de contrôle
-    DrawText("Contrôles:", 10, GetScreenHeight() - 60, 20, DARKGRAY);
-    DrawText("S: Démarrer/Arrêter le partage | ESC: Quitter | F11: Plein écran", 
-             10, GetScreenHeight() - 30, 20, DARKGRAY);
+    DrawText("Contrôles:", 10, bottomY, 20, DARKGRAY);
+    bottomY += 30;
+    
+    DrawText("S: Démarrer/Arrêter le partage | C: Connecter à un pair | D: Déconnecter", 
+             10, bottomY, 20, DARKGRAY);
+    bottomY += 30;
+    
+    DrawText("E: Activer/Désactiver chiffrement | ESC: Quitter | F11: Plein écran", 
+             10, bottomY, 20, DARKGRAY);
     
     EndDrawing();
 }
@@ -360,11 +470,49 @@ void RenderApplication(AppContext* ctx) {
 void HandleEvents(AppContext* ctx) {
     if (!ctx || !ctx->running) return;
     
-    // Gestion des touches
+    // Gestion des touches pour le partage d'écran
     if (IsKeyPressed(KEY_S)) {
         ToggleSharing(ctx);
     }
     
+    // Gestion des touches pour la connexion réseau
+    if (IsKeyPressed(KEY_C)) {
+        // Demander l'adresse IP à l'utilisateur
+        const char* input = TextInputBox((Rectangle){GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 50, 400, 100}, 
+                                       "Connexion au pair", "Entrez l'adresse IP du pair:", "192.168.1.x");
+        if (input != NULL && strlen(input) > 0) {
+            strncpy(ctx->remotePeerIP, input, MAX_IP_LENGTH);
+            ConnectToPeerByIP(ctx);
+        }
+    }
+    
+    // Touche pour déconnecter
+    if (IsKeyPressed(KEY_D)) {
+        if (ctx->connectedPeerID >= 0) {
+            DisconnectFromCurrentPeer(ctx);
+        } else {
+            strcpy(ctx->connectionStatus, "Aucun pair connecté");
+        }
+    }
+    
+    // Touche pour activer/désactiver le chiffrement
+    if (IsKeyPressed(KEY_E)) {
+        if (!ctx->encryptionEnabled) {
+            // Demander le mot de passe à l'utilisateur
+            const char* password = TextInputBox((Rectangle){GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 50, 400, 100}, 
+                                              "Chiffrement", "Entrez un mot de passe:", "");
+            if (password != NULL && strlen(password) >= 4) {
+                strncpy(ctx->connectionPassword, password, sizeof(ctx->connectionPassword) - 1);
+                ToggleEncryption(ctx);
+            } else {
+                strcpy(ctx->connectionStatus, "Mot de passe trop court ou annulé");
+            }
+        } else {
+            ToggleEncryption(ctx);
+        }
+    }
+    
+    // Autres commandes existantes
     if (IsKeyPressed(KEY_ESCAPE)) {
         ctx->running = false;
     }
@@ -372,8 +520,6 @@ void HandleEvents(AppContext* ctx) {
     if (IsKeyPressed(KEY_F11)) {
         ToggleFullscreen();
     }
-    
-    // Pour l'étape 5, nous ajouterons ici la gestion de l'icône de la zone de notification
 }
 
 void ToggleSharing(AppContext* ctx) {
@@ -492,4 +638,160 @@ void RenderTopBar(AppContext* ctx) {
     
     // Afficher l'IP locale
     DrawText(TextFormat("IP Client: %s:%d", ctx->localIP, ctx->localPort), 10, 5, 20, WHITE);
+}
+
+// Fonction pour connecter à un pair distant
+void ConnectToPeerByIP(AppContext* ctx) {
+    if (!ctx || !ctx->networkInitialized) return;
+    
+    // Vérifier si on est déjà connecté
+    if (ctx->connectedPeerID >= 0) {
+        printf("[INFO] Déjà connecté au pair ID %d, déconnexion d'abord\n", ctx->connectedPeerID);
+        DisconnectFromCurrentPeer(ctx);
+    }
+    
+    // Vérifier si l'adresse IP est valide
+    if (strlen(ctx->remotePeerIP) < 7) { // Longueur minimale (1.1.1.1)
+        strcpy(ctx->connectionStatus, "Adresse IP invalide");
+        return;
+    }
+    
+    // Mise à jour du statut
+    ctx->isConnecting = true;
+    sprintf(ctx->connectionStatus, "Connexion à %s:%d...", ctx->remotePeerIP, ctx->remotePeerPort);
+    
+    // Tentative de connexion
+    int peerId = ConnectToPeer(ctx->remotePeerIP, ctx->remotePeerPort);
+    
+    if (peerId >= 0) {
+        ctx->connectedPeerID = peerId;
+        sprintf(ctx->connectionStatus, "Connecté à %s:%d (ID %d)", 
+               ctx->remotePeerIP, ctx->remotePeerPort, peerId);
+        
+        // Activation du chiffrement si nécessaire
+        if (ctx->encryptionEnabled && strlen(ctx->connectionPassword) > 0) {
+            if (EnableEncryption(ctx->connectionPassword)) {
+                strcat(ctx->connectionStatus, " (Chiffré)");
+            } else {
+                strcat(ctx->connectionStatus, " (Échec du chiffrement)");
+            }
+        }
+        
+        ctx->lastNetworkActivity = GetTime();
+    } else {
+        sprintf(ctx->connectionStatus, "Échec de connexion à %s:%d", 
+               ctx->remotePeerIP, ctx->remotePeerPort);
+    }
+    
+    ctx->isConnecting = false;
+}
+
+// Fonction pour se déconnecter du pair actuel
+void DisconnectFromCurrentPeer(AppContext* ctx) {
+    if (!ctx || !ctx->networkInitialized || ctx->connectedPeerID < 0) return;
+    
+    // Déconnecter du pair
+    DisconnectFromPeer(ctx->connectedPeerID);
+    
+    // Mise à jour du statut
+    sprintf(ctx->connectionStatus, "Déconnecté du pair ID %d", ctx->connectedPeerID);
+    ctx->connectedPeerID = -1;
+    
+    // Désactiver le chiffrement
+    if (ctx->encryptionEnabled) {
+        DisableEncryption();
+        ctx->encryptionEnabled = false;
+    }
+}
+
+// Fonction pour activer/désactiver le chiffrement
+void ToggleEncryption(AppContext* ctx) {
+    if (!ctx) return;
+    
+    ctx->encryptionEnabled = !ctx->encryptionEnabled;
+    
+    if (ctx->encryptionEnabled) {
+        // Vérifier si un mot de passe est défini
+        if (strlen(ctx->connectionPassword) < 4) {
+            strcpy(ctx->connectionStatus, "Mot de passe trop court (min 4 caractères)");
+            ctx->encryptionEnabled = false;
+            return;
+        }
+        
+        // Activer le chiffrement si connecté
+        if (ctx->connectedPeerID >= 0) {
+            if (EnableEncryption(ctx->connectionPassword)) {
+                sprintf(ctx->connectionStatus, "Chiffrement activé pour le pair ID %d", 
+                       ctx->connectedPeerID);
+            } else {
+                sprintf(ctx->connectionStatus, "Échec de l'activation du chiffrement");
+                ctx->encryptionEnabled = false;
+            }
+        } else {
+            sprintf(ctx->connectionStatus, "Chiffrement activé, sera utilisé à la connexion");
+        }
+    } else {
+        // Désactiver le chiffrement
+        if (ctx->connectedPeerID >= 0) {
+            DisableEncryption();
+            sprintf(ctx->connectionStatus, "Chiffrement désactivé pour le pair ID %d", 
+                   ctx->connectedPeerID);
+        } else {
+            sprintf(ctx->connectionStatus, "Chiffrement désactivé");
+        }
+    }
+}
+
+const char* TextInputBox(Rectangle bounds, const char* title, const char* message, const char* defaultText) {
+    static char inputBuffer[256] = {0};
+    bool inputActive = true;
+    int framesCounter = 0;
+    
+    // Initialize with default text if provided
+    if (defaultText != NULL) strncpy(inputBuffer, defaultText, 255);
+    
+    while (inputActive && !WindowShouldClose()) {
+        // Handle input
+        int key = GetCharPressed();
+        while (key > 0) {
+            if ((key >= 32) && (key <= 125) && (strlen(inputBuffer) < 255)) {
+                int len = strlen(inputBuffer);
+                inputBuffer[len] = (char)key;
+                inputBuffer[len + 1] = '\0';
+            }
+            key = GetCharPressed();
+        }
+        
+        if (IsKeyPressed(KEY_BACKSPACE)) {
+            int len = strlen(inputBuffer);
+            if (len > 0) inputBuffer[len-1] = '\0';
+        }
+        
+        if (IsKeyPressed(KEY_ENTER)) inputActive = false;
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            inputBuffer[0] = '\0';
+            inputActive = false;
+        }
+        
+        // Draw
+        BeginDrawing();
+            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(RAYWHITE, 0.8f));
+            DrawRectangleRec(bounds, WHITE);
+            DrawRectangleLinesEx(bounds, 2, DARKGRAY);
+            DrawText(title, bounds.x + 10, bounds.y + 10, 20, BLACK);
+            DrawText(message, bounds.x + 10, bounds.y + 40, 18, DARKGRAY);
+            
+            DrawRectangle(bounds.x + 10, bounds.y + 70, bounds.width - 20, 30, LIGHTGRAY);
+            DrawRectangleLinesEx((Rectangle){bounds.x + 10, bounds.y + 70, bounds.width - 20, 30}, 2, DARKGRAY);
+            DrawText(inputBuffer, bounds.x + 15, bounds.y + 75, 18, BLACK);
+            
+            if ((framesCounter/20)%2 == 0) 
+                DrawText("_", bounds.x + 15 + MeasureText(inputBuffer, 18), bounds.y + 75, 18, BLACK);
+            
+            DrawText("[ENTER] to Accept | [ESC] to Cancel", bounds.x + 10, bounds.y + bounds.height - 30, 15, DARKGRAY);
+        EndDrawing();
+        framesCounter++;
+    }
+    
+    return inputBuffer[0] != '\0' ? inputBuffer : NULL;
 }

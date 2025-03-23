@@ -1,10 +1,11 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#define NETWORK_IMPL
 #include <stdbool.h>
 #include <stdint.h>
-#include "capture.h"
-#include "rnet.h"
+
+#include "../include/capture.h"
 
 /**
  * @brief Structure contenant les informations d'un pair connecté

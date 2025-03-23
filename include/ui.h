@@ -69,4 +69,10 @@ void SetUIPage(UIPage page);
  */
 bool IsMinimizedToSystemTray(void);
 
+/**
+ * @brief Affiche une boîte de dialogue de saisie de texte
+ * @param bounds Rectangle définissant la position de la boîte                                      
+ */
+const char* TextInputBox(Rectangle bounds, const char* title, const char* message, const char* defaultText);
+
 #endif // UI_H
