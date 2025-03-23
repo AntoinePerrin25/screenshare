@@ -10,7 +10,7 @@
 #define NOUSER
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
+//#pragma comment(lib, "ws2_32.lib")
 #else
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -25,8 +25,18 @@
 #include "../include/ui.h"
 
 // Constantes
-#define WINDOW_WIDTH 1920
-#define WINDOW_HEIGHT 1080
+#define WINDOW_WIDTH \
+                    960     
+                    /*
+                    1920
+                    1600
+                    1366
+                    1280
+                    854 
+                    640 
+                    */
+#define WINDOW_HEIGHT WINDOW_WIDTH * 9 / 16 // Ratio 16:9
+#define TARGET_FPS 60
 #define APP_NAME "C_Screenshare - Peer-to-Peer Screen Sharing"
 #define MAX_IP_LENGTH 64
 #define DEFAULT_PORT 7890
@@ -85,8 +95,8 @@ int main(void) {
     AppContext appContext = {0};
     appContext.running = true;
     appContext.state = APP_STATE_IDLE;
-    appContext.captureInterval = (int) (1000 / 0.5); // 10 FPS par défaut
-    appContext.captureQuality = 100;   // 80% de qualité par défaut
+    appContext.captureInterval = (int) (1000 / TARGET_FPS); // 10 FPS par défaut
+    appContext.captureQuality = 50;   // 80% de qualité par défaut
     appContext.encryptionEnabled = false;
     // La région de capture sera initialisée après InitWindow() dans InitApplication()
     appContext.currentPage = UI_PAGE_MAIN;
@@ -116,8 +126,18 @@ void InitApplication(AppContext* ctx) {
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, APP_NAME);
     SetTargetFPS(60);
     
-    // Initialisation du système de capture
-    if (!InitCaptureSystem()) {
+    // Configuration du système de capture avec les nouvelles options
+    CaptureConfig captureConfig = {0};
+    captureConfig.method = CAPTURE_METHOD_AUTO; // Sélection automatique de la meilleure méthode
+    captureConfig.quality = ctx->captureQuality;
+    captureConfig.captureInterval = ctx->captureInterval;
+    captureConfig.detectChanges = true; // Activer la détection de changements
+    captureConfig.changeThreshold = 5;  // 5% de tolérance pour les changements
+    captureConfig.autoAdjustQuality = true;
+    captureConfig.targetMonitor = -1;   // Capturer tous les moniteurs par défaut
+    
+    // Initialisation du système de capture avec la configuration
+    if (!InitCaptureSystem(&captureConfig)) {
         printf("[ERROR] Échec de l'initialisation du système de capture\n");
         ctx->running = false;
         return;
@@ -143,7 +163,7 @@ void InitApplication(AppContext* ctx) {
     
     printf("[INFO] Adresse IP locale: %s:%d\n", ctx->localIP, ctx->localPort);
     
-    // Note: Pour cette étape 2 nous n'initialisons pas encore le réseau complet
+    // Note: Pour cette étape nous n'initialisons pas encore le réseau complet
     // L'initialisation complète sera faite dans les étapes suivantes
     
     printf("[INFO] Application initialisée avec succès\n");
@@ -177,29 +197,56 @@ void UpdateApplication(AppContext* ctx) {
     if (ctx->state == APP_STATE_SHARING && 
         (currentTime - lastCaptureTime) * 1000 >= ctx->captureInterval) {
         
+        // Récupération de la configuration actuelle
+        CaptureConfig config = GetCaptureConfig();
+        
         // Libération de la capture précédente si elle existe
         if (ctx->hasCaptureData) {
+            // Conserver les données précédentes pour la détection de changements
+            // UnloadCaptureData libère automatiquement ces ressources
             UnloadCaptureData(&ctx->currentCapture);
             ctx->hasCaptureData = false;
         }
         
-        // Capture de l'écran entier ou d'une région spécifique
-        // Utiliser les dimensions de l'écran physique pour la comparaison
-        if (ctx->captureRegion.width == GetMonitorWidth(0) && 
-            ctx->captureRegion.height == GetMonitorHeight(0)) {
-            ctx->currentCapture = CaptureScreen();
-        } else {
+        // Capture selon la configuration (moniteur spécifique ou région)
+        if (config.targetMonitor >= 0) {
+            // Capture d'un moniteur spécifique
+            ctx->currentCapture = CaptureMonitor(config.targetMonitor);
+        } else if (ctx->captureRegion.width > 0 && ctx->captureRegion.height > 0) {
+            // Capture d'une région spécifique
             ctx->currentCapture = CaptureScreenRegion(ctx->captureRegion);
+        } else {
+            // Capture de tout l'écran
+            ctx->currentCapture = CaptureScreen();
         }
         
-        ctx->hasCaptureData = true;
-        
-        // Compression des données de capture
-        if (ctx->hasCaptureData) {
-            CompressCaptureData(&ctx->currentCapture, ctx->captureQuality);
+        // Vérifier si la capture a réussi
+        if (ctx->currentCapture.image.data != NULL) {
+            ctx->hasCaptureData = true;
+            
+            // Détection des changements si activée
+            if (config.detectChanges) {
+                DetectChanges(&ctx->currentCapture, config.changeThreshold);
+                
+                // Si l'image n'a pas changé significativement, on peut ajuster la qualité
+                // ou la fréquence de capture pour économiser la bande passante
+                if (!ctx->currentCapture.hasChanged && config.autoAdjustQuality) {
+                    // Réduire temporairement la qualité pour les images qui changent peu
+                    int adjustedQuality = ctx->captureQuality * 0.7;
+                    CompressCaptureData(&ctx->currentCapture, adjustedQuality);
+                } else {
+                    // Utiliser la qualité normale pour les images avec changements
+                    CompressCaptureData(&ctx->currentCapture, ctx->captureQuality);
+                }
+            } else {
+                // Compression standard si la détection de changements est désactivée
+                CompressCaptureData(&ctx->currentCapture, ctx->captureQuality);
+            }
+            
+            // Dans l'étape 4, nous enverrons ici les données via le réseau
+        } else {
+            printf("[ERROR] Échec de la capture d'écran\n");
         }
-        
-        // Dans une étape future, on enverrait ici les données via le réseau
         
         lastCaptureTime = currentTime;
     }
@@ -213,6 +260,9 @@ void RenderApplication(AppContext* ctx) {
     
     // Afficher la barre supérieure avec l'IP locale
     RenderTopBar(ctx);
+    
+    // Récupération de la configuration actuelle
+    CaptureConfig config = GetCaptureConfig();
     
     // Affichage de la capture si disponible
     if (ctx->hasCaptureData) {
@@ -232,22 +282,76 @@ void RenderApplication(AppContext* ctx) {
                      (Vector2){0, 0}, 0.0f, WHITE);
         
         // Afficher des informations sur la capture
-        DrawText(TextFormat("Capture: %dx%d", ctx->currentCapture.width, ctx->currentCapture.height), 
-                 10, 40, 20, DARKGRAY);  // Décalé vers le bas pour éviter la barre supérieure
-                 
-        if (ctx->currentCapture.isCompressed) {
-            DrawText(TextFormat("Compression: %d octets (Ratio: %.2f:1)", 
-                   ctx->currentCapture.compressedSize,
-                   (float)(ctx->currentCapture.width * ctx->currentCapture.height * 4) / ctx->currentCapture.compressedSize), 
-                   10, 70, 20, DARKGRAY);  // Décalé vers le bas
+        int y = 40; // Position Y initiale
+        
+        // Dimensions et source
+        const char* sourceText = "Écran complet";
+        if (ctx->currentCapture.monitorIndex >= 0) {
+            sourceText = TextFormat("Moniteur %d", ctx->currentCapture.monitorIndex);
+        } else if (ctx->captureRegion.width != GetMonitorWidth(0) || 
+                  ctx->captureRegion.height != GetMonitorHeight(0)) {
+            sourceText = "Région personnalisée";
         }
+        
+        DrawText(TextFormat("Capture: %dx%d (%s)", 
+                           ctx->currentCapture.width, 
+                           ctx->currentCapture.height,
+                           sourceText), 
+                 10, y, 20, DARKGRAY);
+        y += 30;
+        
+        // Méthode de capture utilisée
+        const char* methodText = "raylib";
+        if (config.method == CAPTURE_METHOD_WIN_GDI) {
+            methodText = "Windows GDI";
+        }
+        DrawText(TextFormat("Méthode: %s", methodText), 10, y, 20, DARKGRAY);
+        y += 30;
+        
+        // Informations de compression
+        if (ctx->currentCapture.isCompressed) {
+            float ratio = (float)(ctx->currentCapture.width * ctx->currentCapture.height * 4) / 
+                         ctx->currentCapture.compressedSize;
+            
+            DrawText(TextFormat("Compression: %d Ko (Ratio: %.2f:1)", 
+                              ctx->currentCapture.compressedSize / 1024,
+                              ratio), 
+                    10, y, 20, DARKGRAY);
+            y += 30;
+        }
+        
+        // Informations sur la détection de changements
+        if (config.detectChanges) {
+            Color changeColor = ctx->currentCapture.hasChanged ? GREEN : GRAY;
+            DrawText(TextFormat("Changement détecté: %s", 
+                              ctx->currentCapture.hasChanged ? "Oui" : "Non"), 
+                    10, y, 20, changeColor);
+            y += 30;
+        }
+        
+        // Informations sur le moniteur actif ou la région
+        int monitorCount = GetMonitorCount();
+        DrawText(TextFormat("Moniteurs disponibles: %d", monitorCount), 10, y, 20, DARKGRAY);
+        y += 30;
+        
+        // Informations d'intervalle et qualité
+        DrawText(TextFormat("Intervalle: %d ms, Qualité: %d%%", 
+                          ctx->captureInterval, ctx->captureQuality), 
+                10, y, 20, DARKGRAY);
+        y+=30;
+
+        // Current fps on white rectangle
+        DrawRectangle(0, y+30, 90, 20, WHITE);
+        DrawText(TextFormat("FPS: %d", GetFPS()), 10, y + 30, 20, DARKGRAY);
     }
     
     // Affichage de l'état et des contrôles
     DrawText(ctx->state == APP_STATE_SHARING ? "État: Partage en cours" : "État: En attente", 
-             10, GetScreenHeight() - 60, 20, ctx->state == APP_STATE_SHARING ? GREEN : GRAY);
+             10, GetScreenHeight() - 90, 20, ctx->state == APP_STATE_SHARING ? GREEN : GRAY);
     
-    DrawText("Appuyez sur S pour démarrer/arrêter le partage", 
+    // Affichage des touches de contrôle
+    DrawText("Contrôles:", 10, GetScreenHeight() - 60, 20, DARKGRAY);
+    DrawText("S: Démarrer/Arrêter le partage | ESC: Quitter | F11: Plein écran", 
              10, GetScreenHeight() - 30, 20, DARKGRAY);
     
     EndDrawing();

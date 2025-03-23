@@ -4,13 +4,14 @@ Ce document détaille les étapes pour développer un logiciel de partage d'écr
 
 ## État actuel du projet
 
-Le projet implémente actuellement la capture d'écran avec raylib et affiche l'adresse IP du client dans une barre supérieure. Les prochaines étapes consistent à implémenter le partage P2P de l'écran et l'intégration avec la zone de notification Windows.
+Le projet implémente actuellement une capture d'écran avancée avec support des API Windows (GDI/BitBlt) pour capturer l'écran global, le support multi-écrans, et la détection de changements. L'adresse IP du client est affichée dans une barre supérieure. Les prochaines étapes consistent à implémenter le partage P2P de l'écran et l'intégration avec la zone de notification Windows.
 
 ## Outils et bibliothèques utilisés
 
 - **raylib**: Une bibliothèque C simple pour développer des jeux/applications qui fournit des fonctions pour créer des fenêtres, gérer l'input, et afficher des graphiques.
 - **rnet.h**: Une fine couche d'abstraction pour la communication réseau UDP (incluse dans notre projet).
 - **nob.c/nob.h**: Un système de build simple pour C qui nous permet de compiler notre projet.
+- **Windows GDI**: API Windows utilisée pour la capture d'écran globale (BitBlt).
 
 ## Structure du projet
 
@@ -42,25 +43,22 @@ src/                   # Code source
 - ✅ Intégration de raylib pour l'interface graphique
 - ✅ Configuration du système de build avec nob.c
 
-### Étape 2: Implémentation de la capture d'écran
+### Étape 2: Implémentation de la capture d'écran basique
 - ✅ Création d'une fenêtre avec raylib
 - ✅ Implémentation de la capture d'écran avec `LoadImageFromScreen()`
 - ✅ Conversion de l'image en texture pour l'affichage
 - ✅ Implémentation d'une compression de base
 - ✅ Affichage de l'adresse IP du client dans la barre supérieure
 
-## Prochaines étapes
-
 ### Étape 3: Amélioration de la capture d'écran
-1. Modifier la capture pour cibler l'écran global au lieu de la fenêtre raylib:
-   - Utiliser les API Windows (BitBlt, GDI) pour capturer directement l'écran
-   - Supporter la capture multi-écrans
-   - Permettre la sélection d'une région spécifique de l'écran
+- ✅ Implémentation de la capture avec les API Windows GDI (BitBlt)
+- ✅ Support de la capture d'écran global au lieu de la fenêtre raylib
+- ✅ Détection et support des configurations multi-écrans
+- ✅ Optimisation de la compression d'image
+- ✅ Implémentation de la détection de changements entre captures
+- ✅ Ajustement dynamique de la qualité selon les changements détectés
 
-2. Optimiser le processus de capture:
-   - Implémenter la détection des changements entre les captures
-   - Améliorer les méthodes de compression (JPEG, PNG, ou compression personnalisée)
-   - Mettre en place un système de capture à fréquence variable selon le contenu
+## Prochaines étapes
 
 ### Étape 4: Implémentation du partage P2P
 1. Mettre en place le système de communication P2P avec rnet.h:
