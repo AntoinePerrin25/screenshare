@@ -2,10 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <raylib.h>
 
-// Inclusion pour obtenir l'adresse IP local
+// Inclusions pour obtenir l'adresse IP locale
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#define NOUSER
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -16,16 +18,16 @@
 #include <ifaddrs.h>
 #include <unistd.h>
 #endif
+#include <raylib.h>
 
 #include "../include/capture.h"
 #include "../include/network.h"
 #include "../include/ui.h"
 
 // Constantes
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
 #define APP_NAME "C_Screenshare - Peer-to-Peer Screen Sharing"
-#define MAX_PEERS 10
 #define MAX_IP_LENGTH 64
 #define DEFAULT_PORT 7890
 
@@ -36,40 +38,35 @@ typedef enum {
     APP_STATE_VIEWING     // Visualisation d'un partage en cours
 } AppState;
 
-// Structure pour gérer un pair
+/**
+ * @brief Structure principale contenant l'état de l'application
+ * @details Contient toutes les informations nécessaires pour gérer l'état de l'application.
+ * @param bool running;              
+ * @param bool minimized;            
+ * @param AppState state;            
+ * @param int captureInterval;       
+ * @param int captureQuality;        
+ * @param bool encryptionEnabled;    
+ * @param Rectangle captureRegion;   
+ * @param CaptureData currentCapture;
+ * @param bool hasCaptureData;       
+ * @param UIPage currentPage;        
+ */
 typedef struct {
-    char ip[MAX_IP_LENGTH];  // Adresse IP du pair
-    int port;                // Port du pair
-    bool connected;          // Indique si le pair est connecté
-    bool isSharing;          // Indique si on partage l'écran avec ce pair
-} PeerInfo;
-
-// Structure principale contenant l'état de l'application
-typedef struct {
-    bool running;          // Indique si l'application est en cours d'exécution
-    bool minimized;        // Indique si l'application est minimisée
-    AppState state;        // État actuel de l'application
-    int captureInterval;   // Intervalle de capture en ms
-    int captureQuality;    // Qualité de la capture (0-100)
-    bool encryptionEnabled; // Indique si le chiffrement est activé
-    Rectangle captureRegion; // Région de capture (utilisée en mode partage)
+    bool running;               // Indique si l'application est en cours d'exécution
+    bool minimized;             // Indique si l'application est minimisée
+    AppState state;             // État actuel de l'application
+    int captureInterval;        // Intervalle de capture en ms
+    int captureQuality;         // Qualité de la capture (0-100)
+    bool encryptionEnabled;     // Indique si le chiffrement est activé
+    Rectangle captureRegion;    // Région de capture (utilisée en mode partage)
     CaptureData currentCapture; // Dernière capture effectuée
-    bool hasCaptureData;   // Indique si des données de capture sont disponibles
-    UIPage currentPage;    // Page UI actuelle
+    bool hasCaptureData;        // Indique si des données de capture sont disponibles
+    UIPage currentPage;         // Page UI actuelle
     
     // Informations réseau
     char localIP[MAX_IP_LENGTH]; // IP locale de l'hôte
     int localPort;               // Port local
-    PeerInfo peers[MAX_PEERS];   // Liste des pairs
-    int peerCount;               // Nombre de pairs
-    int selectedPeer;            // Index du pair sélectionné (-1 pour aucun)
-    bool shareWithAll;           // Partager avec tous les pairs
-    
-    // UI
-    bool addingPeer;             // Mode ajout de pair actif
-    char inputBuffer[MAX_IP_LENGTH]; // Buffer pour l'entrée d'adresse IP
-    int inputCursorIndex;        // Position du curseur dans le buffer
-    bool inputActive;            // Indique si l'entrée est active
 } AppContext;
 
 // Prototypes de fonctions
@@ -81,19 +78,15 @@ void HandleEvents(AppContext* ctx);
 void ToggleSharing(AppContext* ctx);
 void ToggleMinimized(AppContext* ctx);
 bool GetLocalIPAddress(char* ipBuffer, int bufferSize);
-void AddPeer(AppContext* ctx, const char* ip, int port);
-void RemovePeer(AppContext* ctx, int index);
-void RenderTopBar(AppContext* ctx);
-void HandlePeerManagement(AppContext* ctx);
-void RenderPeerList(AppContext* ctx);
+void RenderTopBar(AppContext* ctx); // Nouvelle fonction pour afficher la barre supérieure
 
 int main(void) {
     // Initialisation du contexte de l'application
     AppContext appContext = {0};
     appContext.running = true;
     appContext.state = APP_STATE_IDLE;
-    appContext.captureInterval = 100; // 10 FPS par défaut
-    appContext.captureQuality = 80;   // 80% de qualité par défaut
+    appContext.captureInterval = (int) (1000 / 0.5); // 10 FPS par défaut
+    appContext.captureQuality = 100;   // 80% de qualité par défaut
     appContext.encryptionEnabled = false;
     // La région de capture sera initialisée après InitWindow() dans InitApplication()
     appContext.currentPage = UI_PAGE_MAIN;
@@ -106,6 +99,7 @@ int main(void) {
         HandleEvents(&appContext);
         UpdateApplication(&appContext);
         RenderApplication(&appContext);
+        RenderTopBar(&appContext);
     }
     
     // Nettoyage
@@ -146,11 +140,6 @@ void InitApplication(AppContext* ctx) {
         printf("[WARNING] Impossible d'obtenir l'adresse IP locale, utilisation de 127.0.0.1\n");
         strncpy(ctx->localIP, "127.0.0.1", MAX_IP_LENGTH);
     }
-    
-    ctx->peerCount = 0;
-    ctx->selectedPeer = -1;
-    ctx->shareWithAll = true;
-    ctx->addingPeer = false;
     
     printf("[INFO] Adresse IP locale: %s:%d\n", ctx->localIP, ctx->localPort);
     
@@ -236,9 +225,6 @@ void RenderApplication(AppContext* ctx) {
         int posX = (GetScreenWidth() - displayWidth) / 2;
         int posY = (GetScreenHeight() - displayHeight) / 2;
         
-        // Décaler l'affichage pour laisser de la place à la liste des pairs
-        posX += 150;  // Décalage pour la liste des pairs
-        
         // Afficher la texture
         DrawTexturePro(ctx->currentCapture.texture, 
                      (Rectangle){0, 0, (float)ctx->currentCapture.width, (float)ctx->currentCapture.height},
@@ -247,25 +233,22 @@ void RenderApplication(AppContext* ctx) {
         
         // Afficher des informations sur la capture
         DrawText(TextFormat("Capture: %dx%d", ctx->currentCapture.width, ctx->currentCapture.height), 
-                 310, 40, 20, DARKGRAY);
+                 10, 40, 20, DARKGRAY);  // Décalé vers le bas pour éviter la barre supérieure
                  
         if (ctx->currentCapture.isCompressed) {
             DrawText(TextFormat("Compression: %d octets (Ratio: %.2f:1)", 
                    ctx->currentCapture.compressedSize,
                    (float)(ctx->currentCapture.width * ctx->currentCapture.height * 4) / ctx->currentCapture.compressedSize), 
-                   310, 70, 20, DARKGRAY);
+                   10, 70, 20, DARKGRAY);  // Décalé vers le bas
         }
     }
     
-    // Afficher la liste des pairs et options de partage
-    RenderPeerList(ctx);
-    
     // Affichage de l'état et des contrôles
     DrawText(ctx->state == APP_STATE_SHARING ? "État: Partage en cours" : "État: En attente", 
-             310, GetScreenHeight() - 60, 20, ctx->state == APP_STATE_SHARING ? GREEN : GRAY);
+             10, GetScreenHeight() - 60, 20, ctx->state == APP_STATE_SHARING ? GREEN : GRAY);
     
     DrawText("Appuyez sur S pour démarrer/arrêter le partage", 
-             310, GetScreenHeight() - 30, 20, DARKGRAY);
+             10, GetScreenHeight() - 30, 20, DARKGRAY);
     
     EndDrawing();
 }
@@ -279,51 +262,11 @@ void HandleEvents(AppContext* ctx) {
     }
     
     if (IsKeyPressed(KEY_ESCAPE)) {
-        if (ctx->addingPeer) {
-            ctx->addingPeer = false;
-            ctx->inputActive = false;
-        } else {
-            ctx->running = false;
-        }
+        ctx->running = false;
     }
     
     if (IsKeyPressed(KEY_F11)) {
         ToggleFullscreen();
-    }
-    
-    // Gestion de la saisie d'adresse IP
-    if (ctx->addingPeer && ctx->inputActive) {
-        int key = GetCharPressed();
-        
-        // Traiter les caractères pour l'adresse IP (chiffres, points)
-        while (key > 0) {
-            // Vérifier si le caractère est valide pour une adresse IP (chiffres et points)
-            if ((key >= '0' && key <= '9') || key == '.') {
-                if (ctx->inputCursorIndex < MAX_IP_LENGTH - 1) {
-                    ctx->inputBuffer[ctx->inputCursorIndex] = (char)key;
-                    ctx->inputCursorIndex++;
-                    ctx->inputBuffer[ctx->inputCursorIndex] = '\0';
-                }
-            }
-            
-            key = GetCharPressed();  // Vérifier le prochain caractère
-        }
-        
-        // Gestion des touches spéciales
-        if (IsKeyPressed(KEY_BACKSPACE)) {
-            if (ctx->inputCursorIndex > 0) {
-                ctx->inputCursorIndex--;
-                ctx->inputBuffer[ctx->inputCursorIndex] = '\0';
-            }
-        }
-        
-        if (IsKeyPressed(KEY_ENTER)) {
-            if (strlen(ctx->inputBuffer) > 0) {
-                AddPeer(ctx, ctx->inputBuffer, DEFAULT_PORT);
-                ctx->addingPeer = false;
-                ctx->inputActive = false;
-            }
-        }
     }
     
     // Pour l'étape 5, nous ajouterons ici la gestion de l'icône de la zone de notification
@@ -436,196 +379,13 @@ bool GetLocalIPAddress(char* ipBuffer, int bufferSize) {
     return true; // Retourne true même si on n'a trouvé que localhost
 }
 
-// Fonction pour ajouter un pair
-void AddPeer(AppContext* ctx, const char* ip, int port) {
-    if (!ctx || !ip) return;
-    
-    // Vérifier si le pair existe déjà
-    for (int i = 0; i < ctx->peerCount; i++) {
-        if (strcmp(ctx->peers[i].ip, ip) == 0 && ctx->peers[i].port == port) {
-            printf("[INFO] Le pair %s:%d existe déjà\n", ip, port);
-            return;
-        }
-    }
-    
-    // Vérifier si la liste est pleine
-    if (ctx->peerCount >= MAX_PEERS) {
-        printf("[WARNING] Impossible d'ajouter plus de pairs (maximum: %d)\n", MAX_PEERS);
-        return;
-    }
-    
-    // Ajouter le nouveau pair
-    strncpy(ctx->peers[ctx->peerCount].ip, ip, MAX_IP_LENGTH);
-    ctx->peers[ctx->peerCount].port = port;
-    ctx->peers[ctx->peerCount].connected = false;  // Initialement non connecté
-    ctx->peers[ctx->peerCount].isSharing = ctx->shareWithAll;  // Partage selon le réglage global
-    
-    printf("[INFO] Nouveau pair ajouté: %s:%d\n", ip, port);
-    ctx->peerCount++;
-}
-
-// Fonction pour supprimer un pair
-void RemovePeer(AppContext* ctx, int index) {
-    if (!ctx || index < 0 || index >= ctx->peerCount) return;
-    
-    printf("[INFO] Pair supprimé: %s:%d\n", ctx->peers[index].ip, ctx->peers[index].port);
-    
-    // Déplacer tous les pairs après l'index vers le haut
-    for (int i = index; i < ctx->peerCount - 1; i++) {
-        ctx->peers[i] = ctx->peers[i + 1];
-    }
-    
-    ctx->peerCount--;
-    
-    // Si le pair sélectionné est supprimé, réinitialiser la sélection
-    if (ctx->selectedPeer == index) {
-        ctx->selectedPeer = -1;
-    }
-    // Si le pair sélectionné était après celui supprimé, ajuster l'index
-    else if (ctx->selectedPeer > index) {
-        ctx->selectedPeer--;
-    }
-}
-
 // Fonction pour dessiner la barre supérieure avec l'IP
 void RenderTopBar(AppContext* ctx) {
+    if (!ctx) return;
+    
     // Fond de la barre supérieure
     DrawRectangle(0, 0, GetScreenWidth(), 30, DARKGRAY);
     
     // Afficher l'IP locale
-    DrawText(TextFormat("IP: %s:%d", ctx->localIP, ctx->localPort), 10, 5, 20, WHITE);
-    
-    // Afficher le nombre de pairs
-    DrawText(TextFormat("Pairs: %d/%d", ctx->peerCount, MAX_PEERS), GetScreenWidth() - 150, 5, 20, WHITE);
-    
-    // Bouton pour ajouter un pair
-    Rectangle addButton = { GetScreenWidth() - 40, 5, 25, 20 };
-    DrawRectangleRec(addButton, ctx->addingPeer ? DARKBLUE : BLUE);
-    DrawText("+", GetScreenWidth() - 30, 5, 20, WHITE);
-    
-    // Si on clique sur le bouton
-    if (CheckCollisionPointRec(GetMousePosition(), addButton) && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-        ctx->addingPeer = !ctx->addingPeer;
-        if (ctx->addingPeer) {
-            // Initialiser le buffer pour l'entrée d'une nouvelle IP
-            memset(ctx->inputBuffer, 0, MAX_IP_LENGTH);
-            ctx->inputCursorIndex = 0;
-            ctx->inputActive = true;
-        }
-    }
-    
-    // Si on est en mode ajout de pair, afficher la zone de saisie
-    if (ctx->addingPeer) {
-        // Fond de la zone de saisie
-        DrawRectangle(GetScreenWidth() / 2 - 150, 35, 300, 30, LIGHTGRAY);
-        DrawText("Adresse IP du pair:", GetScreenWidth() / 2 - 140, 40, 20, BLACK);
-        
-        // Champ de saisie
-        Rectangle inputField = { GetScreenWidth() / 2 - 140, 65, 280, 30 };
-        DrawRectangleRec(inputField, WHITE);
-        DrawRectangleLinesEx(inputField, 2, ctx->inputActive ? BLUE : GRAY);
-        DrawText(ctx->inputBuffer, inputField.x + 5, inputField.y + 5, 20, BLACK);
-        
-        // Curseur
-        if (ctx->inputActive) {
-            // Calculer la position du curseur
-            int cursorPosX = inputField.x + 5 + MeasureText(ctx->inputBuffer, 20);
-            DrawRectangle(cursorPosX, inputField.y + 5, 2, 20, (((int)(GetTime() * 2)) % 2) ? BLACK : WHITE);
-            
-            // Bouton "Ajouter"
-            Rectangle addPeerButton = { GetScreenWidth() / 2 - 60, 100, 120, 30 };
-            DrawRectangleRec(addPeerButton, GREEN);
-            DrawText("Ajouter", addPeerButton.x + 20, addPeerButton.y + 5, 20, WHITE);
-            
-            // Gestion du clic sur le bouton "Ajouter"
-            if (CheckCollisionPointRec(GetMousePosition(), addPeerButton) && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-                if (strlen(ctx->inputBuffer) > 0) {
-                    AddPeer(ctx, ctx->inputBuffer, DEFAULT_PORT);
-                    ctx->addingPeer = false;
-                    ctx->inputActive = false;
-                }
-            }
-        }
-        
-        // Clic en dehors de la zone d'ajout de pair pour annuler
-        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && 
-            !CheckCollisionPointRec(GetMousePosition(), inputField) && 
-            !CheckCollisionPointRec(GetMousePosition(), addButton)) {
-            ctx->addingPeer = false;
-            ctx->inputActive = false;
-        }
-    }
-}
-
-// Fonction pour gérer la liste des pairs
-void RenderPeerList(AppContext* ctx) {
-    if (!ctx) return;
-    
-    // Fond de la liste des pairs
-    DrawRectangle(5, 150, 300, GetScreenHeight() - 200, LIGHTGRAY);
-    DrawText("Pairs connectés:", 15, 160, 20, BLACK);
-    
-    // Afficher chaque pair
-    for (int i = 0; i < ctx->peerCount; i++) {
-        Rectangle peerRect = { 10, 190 + i * 40, 290, 35 };
-        
-        // Fond de l'entrée du pair (sélectionné ou non)
-        if (i == ctx->selectedPeer) {
-            DrawRectangleRec(peerRect, SKYBLUE);
-        } else {
-            DrawRectangleRec(peerRect, WHITE);
-        }
-        
-        // Informations du pair
-        DrawText(TextFormat("%s:%d", ctx->peers[i].ip, ctx->peers[i].port), 
-                 peerRect.x + 5, peerRect.y + 5, 20, BLACK);
-        
-        // Indicateur de partage
-        if (ctx->peers[i].isSharing) {
-            DrawRectangle(peerRect.x + 250, peerRect.y + 5, 25, 25, GREEN);
-            DrawText("✓", peerRect.x + 258, peerRect.y + 5, 20, WHITE);
-        } else {
-            DrawRectangle(peerRect.x + 250, peerRect.y + 5, 25, 25, RED);
-            DrawText("✗", peerRect.x + 258, peerRect.y + 5, 20, WHITE);
-        }
-        
-        // Gestion du clic sur un pair
-        if (CheckCollisionPointRec(GetMousePosition(), peerRect) && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-            ctx->selectedPeer = i;
-        }
-        
-        // Gestion du double-clic pour basculer le partage avec ce pair
-        static float lastClickTime = 0;
-        static int lastClickedPeer = -1;
-        
-        if (i == ctx->selectedPeer && IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && 
-            CheckCollisionPointRec(GetMousePosition(), peerRect)) {
-            
-            float currentTime = GetTime();
-            
-            if (lastClickedPeer == i && (currentTime - lastClickTime) < 0.5f) {
-                // Double-clic détecté
-                ctx->peers[i].isSharing = !ctx->peers[i].isSharing;
-                lastClickTime = 0;  // Réinitialiser pour éviter les triples clics
-            } else {
-                lastClickTime = currentTime;
-                lastClickedPeer = i;
-            }
-        }
-    }
-    
-    // Contrôle pour partager avec tous les pairs
-    Rectangle shareAllRect = { 10, GetScreenHeight() - 45, 290, 30 };
-    DrawRectangleRec(shareAllRect, ctx->shareWithAll ? GREEN : LIGHTGRAY);
-    DrawText("Partager avec tous", shareAllRect.x + 10, shareAllRect.y + 5, 20, BLACK);
-    
-    // Gestion du clic sur "Partager avec tous"
-    if (CheckCollisionPointRec(GetMousePosition(), shareAllRect) && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-        ctx->shareWithAll = !ctx->shareWithAll;
-        
-        // Mettre à jour le statut de partage pour tous les pairs
-        for (int i = 0; i < ctx->peerCount; i++) {
-            ctx->peers[i].isSharing = ctx->shareWithAll;
-        }
-    }
+    DrawText(TextFormat("IP Client: %s:%d", ctx->localIP, ctx->localPort), 10, 5, 20, WHITE);
 }

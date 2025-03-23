@@ -87,7 +87,7 @@ CaptureData CaptureScreenRegion(Rectangle region) {
     // Initialisation des dimensions
     captureData.width = (int)region.width;
     captureData.height = (int)region.height;
-    
+    printf("[INFO] Capture de la région: %.0fx%.0f\n", region.width, region.height);
     // Capture de l'écran entier d'abord
     Image fullScreenImage = LoadImageFromScreen();
     
